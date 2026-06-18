@@ -46,7 +46,8 @@ CLAUDE.md
 # Local env / secrets
 .env
 .env.local
-.env.apple-notarize.local*
+.env.apple-notarize.local
+!.env.apple-notarize.local.example
 
 # Bridge runtime files
 *.pid
