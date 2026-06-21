@@ -812,6 +812,18 @@ const EXPORT_STORY_PHASE_START = 0.486;
 const EXPORT_STORY_PHASE_WRAP_SPAN = Math.max(0.0001, 1 - EXPORT_STORY_PHASE_START);
 
 (() => {
+  const __clawdSetAttribute = Element.prototype.setAttribute;
+  const __clawdRemoveAttribute = Element.prototype.removeAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    const next = String(value);
+    if (this.getAttribute(name) === next) return;
+    return __clawdSetAttribute.call(this, name, next);
+  };
+  Element.prototype.removeAttribute = function (name) {
+    if (!this.hasAttribute(name)) return;
+    return __clawdRemoveAttribute.call(this, name);
+  };
+
   const configNode = document.getElementById("working-3session-export-runtime-config");
   const config = configNode ? JSON.parse(configNode.textContent || "{}") : {};
   const values = config.values || {};
@@ -1497,18 +1509,63 @@ const DEFAULT_LEFT_BULGE = 0;
     const checkerBg = document.getElementById("checkerBg");
     const readout = document.getElementById("readout");
     const reset = document.getElementById("reset");
+    const STORY_MOTION_FRAME_MS = 1000 / 60;
+    const SECONDARY_MOTION_FRAME_MS = 1000 / 30;
     let storyMotionPlaying = true;
-    let storyMotionTimer = 0;
     let storyMotionLastTs = null;
     let fishTerminalPlaying = true;
-    let fishTerminalTimer = 0;
     let fishTerminalLastTs = null;
     let rodMotionPlaying = true;
-    let rodMotionTimer = 0;
     let rodMotionLastTs = null;
     let biteMotionPlaying = true;
-    let biteMotionTimer = 0;
     let biteMotionLastTs = null;
+    let motionSchedulerRaf = 0;
+    let motionSchedulerPaused = false;
+
+    function anyMotionPlaying() {
+      return storyMotionPlaying || fishTerminalPlaying || rodMotionPlaying || biteMotionPlaying;
+    }
+
+    function ensureMotionScheduler() {
+      if (motionSchedulerPaused || motionSchedulerRaf || !anyMotionPlaying()) return;
+      motionSchedulerRaf = requestAnimationFrame(runMotionScheduler);
+    }
+
+    function stopMotionSchedulerIfIdle() {
+      if (motionSchedulerRaf && !anyMotionPlaying()) {
+        cancelAnimationFrame(motionSchedulerRaf);
+        motionSchedulerRaf = 0;
+      }
+    }
+
+    function pauseMotionScheduler() {
+      if (motionSchedulerRaf) {
+        cancelAnimationFrame(motionSchedulerRaf);
+        motionSchedulerRaf = 0;
+      }
+    }
+
+    function shouldTickMotion(lastTs, frameMs, now) {
+      return lastTs === null || now - lastTs >= frameMs - 1;
+    }
+
+    function runMotionScheduler(now) {
+      motionSchedulerRaf = 0;
+      if (motionSchedulerPaused) return;
+      if (storyMotionPlaying && shouldTickMotion(storyMotionLastTs, STORY_MOTION_FRAME_MS, now)) {
+        tickStoryMotion(now);
+      }
+      if (fishTerminalPlaying && shouldTickMotion(fishTerminalLastTs, SECONDARY_MOTION_FRAME_MS, now)) {
+        tickFishTerminalMotion(now);
+      }
+      if (biteMotionPlaying && shouldTickMotion(biteMotionLastTs, SECONDARY_MOTION_FRAME_MS, now)) {
+        tickBiteMotion(now);
+      }
+      if (rodMotionPlaying && shouldTickMotion(rodMotionLastTs, SECONDARY_MOTION_FRAME_MS, now)) {
+        tickRodMotion(now);
+      }
+      if (anyMotionPlaying()) ensureMotionScheduler();
+    }
 
     [
       leftBulge,
@@ -3090,22 +3147,14 @@ const DEFAULT_LEFT_BULGE = 0;
         updateKeyframeSelection();
         setBiteMotionPlaying(false);
         storyMotionLastTs = performance.now();
-        if (!storyMotionTimer) storyMotionTimer = setInterval(tickStoryMotion, 1000 / 60);
-      } else if (storyMotionTimer) {
-        clearInterval(storyMotionTimer);
-        storyMotionTimer = 0;
+        ensureMotionScheduler();
+      } else {
+        stopMotionSchedulerIfIdle();
       }
     }
 
-    function tickStoryMotion() {
-      if (!storyMotionPlaying) {
-        if (storyMotionTimer) {
-          clearInterval(storyMotionTimer);
-          storyMotionTimer = 0;
-        }
-        return;
-      }
-      const now = performance.now();
+    function tickStoryMotion(now = performance.now()) {
+      if (!storyMotionPlaying) return;
       const dt = clamp((now - storyMotionLastTs) / 1000, 0, 0.08);
       storyMotionLastTs = now;
       const speed = Number(storyMotionSpeed.value);
@@ -3125,22 +3174,14 @@ const DEFAULT_LEFT_BULGE = 0;
       fishTerminalPlay.textContent = playing ? "Pause" : "Play";
       if (playing) {
         fishTerminalLastTs = performance.now();
-        if (!fishTerminalTimer) fishTerminalTimer = setInterval(tickFishTerminalMotion, 1000 / 30);
-      } else if (fishTerminalTimer) {
-        clearInterval(fishTerminalTimer);
-        fishTerminalTimer = 0;
+        ensureMotionScheduler();
+      } else {
+        stopMotionSchedulerIfIdle();
       }
     }
 
-    function tickFishTerminalMotion() {
-      if (!fishTerminalPlaying) {
-        if (fishTerminalTimer) {
-          clearInterval(fishTerminalTimer);
-          fishTerminalTimer = 0;
-        }
-        return;
-      }
-      const now = performance.now();
+    function tickFishTerminalMotion(now = performance.now()) {
+      if (!fishTerminalPlaying) return;
       const dt = clamp((now - fishTerminalLastTs) / 1000, 0, 0.08);
       fishTerminalLastTs = now;
       const speed = Number(fishTerminalSpeed.value);
@@ -3369,22 +3410,14 @@ const DEFAULT_LEFT_BULGE = 0;
       biteMotionPlay.textContent = playing ? "Pause" : "Play";
       if (playing) {
         biteMotionLastTs = performance.now();
-        if (!biteMotionTimer) biteMotionTimer = setInterval(tickBiteMotion, 1000 / 30);
-      } else if (biteMotionTimer) {
-        clearInterval(biteMotionTimer);
-        biteMotionTimer = 0;
+        ensureMotionScheduler();
+      } else {
+        stopMotionSchedulerIfIdle();
       }
     }
 
-    function tickBiteMotion() {
-      if (!biteMotionPlaying) {
-        if (biteMotionTimer) {
-          clearInterval(biteMotionTimer);
-          biteMotionTimer = 0;
-        }
-        return;
-      }
-      const now = performance.now();
+    function tickBiteMotion(now = performance.now()) {
+      if (!biteMotionPlaying) return;
       const dt = clamp((now - biteMotionLastTs) / 1000, 0, 0.08);
       biteMotionLastTs = now;
       const speed = Number(biteMotionSpeed.value);
@@ -3424,22 +3457,14 @@ const DEFAULT_LEFT_BULGE = 0;
       rodMotionPlay.textContent = playing ? "Pause" : "Play";
       if (playing) {
         rodMotionLastTs = performance.now();
-        if (!rodMotionTimer) rodMotionTimer = setInterval(tickRodMotion, 1000 / 30);
-      } else if (rodMotionTimer) {
-        clearInterval(rodMotionTimer);
-        rodMotionTimer = 0;
+        ensureMotionScheduler();
+      } else {
+        stopMotionSchedulerIfIdle();
       }
     }
 
-    function tickRodMotion() {
-      if (!rodMotionPlaying) {
-        if (rodMotionTimer) {
-          clearInterval(rodMotionTimer);
-          rodMotionTimer = 0;
-        }
-        return;
-      }
-      const now = performance.now();
+    function tickRodMotion(now = performance.now()) {
+      if (!rodMotionPlaying) return;
       const dt = clamp((now - rodMotionLastTs) / 1000, 0, 0.08);
       rodMotionLastTs = now;
       const speed = Number(rodMotionSpeed.value);
@@ -3871,8 +3896,14 @@ const DEFAULT_LEFT_BULGE = 0;
     window.__cloudlingReplayWorking3Session = replayExportStory;
     window.__cloudlingSetWorking3SessionProgress = setExportStoryProgress;
     window.__clawdSetLowPowerPaused = (paused) => {
-      if (paused) setStoryMotionPlaying(false);
-      else setStoryMotionPlaying(true);
+      motionSchedulerPaused = paused;
+      if (paused) {
+        setStoryMotionPlaying(false);
+        pauseMotionScheduler();
+      } else {
+        setStoryMotionPlaying(true);
+        ensureMotionScheduler();
+      }
     };
 
     const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;

@@ -183,6 +183,17 @@
 
   <script type="application/ecmascript"><![CDATA[
     const NS = "http://www.w3.org/2000/svg";
+    const __clawdSetAttribute = Element.prototype.setAttribute;
+    const __clawdRemoveAttribute = Element.prototype.removeAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      const next = String(value);
+      if (this.getAttribute(name) === next) return;
+      return __clawdSetAttribute.call(this, name, next);
+    };
+    Element.prototype.removeAttribute = function (name) {
+      if (!this.hasAttribute(name)) return;
+      return __clawdRemoveAttribute.call(this, name);
+    };
     const MASTER_URL = "inlined:hamster-flat-layered-v18-noodle-hands.svg";
     const HAND_AXES = {
       left: { root: { x: 118, y: 268 }, tip: { x: -28, y: 268 } },
@@ -453,6 +464,7 @@
     let animationFrame = 0;
     let loopEpoch = 0;
     let lastJsonUpdate = 0;
+    let lowPowerPaused = false;
 
     const mount = document.querySelector("#mount");
     const stage = document.querySelector(".stage");
@@ -891,6 +903,7 @@
     }
 
     function startLoop() {
+      if (lowPowerPaused) return;
       stopLoop();
       const durationMs = Math.max(0.1, state.loopDuration) * 1000;
       loopEpoch = performance.now() - clamp(state.breathProgress, 0, 100) / 100 * durationMs;
@@ -904,6 +917,7 @@
 
     function tickLoop(now = performance.now()) {
       animationFrame = 0;
+      if (lowPowerPaused) return;
       const durationMs = Math.max(0.1, state.loopDuration) * 1000;
       const phase = ((now - loopEpoch) % durationMs + durationMs) % durationMs;
       state.breathProgress = Number(fmt(phase / durationMs * 100));
@@ -912,6 +926,17 @@
       render();
       if (state.loopPlaying) animationFrame = window.setTimeout(tickLoop, 1000 / 30);
     }
+
+    window.__clawdSetLowPowerPaused = function (paused) {
+      const next = !!paused;
+      if (lowPowerPaused === next) return;
+      lowPowerPaused = next;
+      if (next) {
+        stopLoop();
+        return;
+      }
+      if (state.loopPlaying) startLoop();
+    };
 
     function updateProgressControl() {
       const input = document.querySelector("#breathProgress");

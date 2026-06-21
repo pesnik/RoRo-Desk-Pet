@@ -24,6 +24,9 @@
 - **Zero manual setup** — first launch guides you through environment check, model download, and warm-up.
 - **Desktop companion** — open a floating chat bubble, talk with MiniCPM, and keep the pet on screen while you work.
 - **Agent-aware reactions** — the pet can react to coding activity from tools such as Cursor, Claude Code, and Codex.
+- **Task narration** — when a coding-agent session finishes, the pet summarizes what the AI just did in a speech bubble, so you can catch up at a glance.
+- **Idle alerts** — if a coding agent has been waiting for your input, the pet plays a bell animation and sound to get your attention.
+- **Auto-detect agents** — the app scans your machine for installed coding agents and prompts you to connect them in one click.
 - **Smart model download** — the app can download from Hugging Face or ModelScope and choose the better source for your network.
 - **Persona support** — switch or import character adapters from **Settings -> MiniCPM**.
 
