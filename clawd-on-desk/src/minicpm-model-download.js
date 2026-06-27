@@ -5,6 +5,7 @@ const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 const path = require("path");
+const { createProxyAgent } = require("./proxy-agent");
 
 const MODEL_FILENAME = "MiniCPM5-1B-Q8_0.gguf";
 const MODEL_SIZE_BYTES = 1_153_529_216;
@@ -118,6 +119,7 @@ function triggerModelScopeSnapshotCount({
   modelId = MODELSCOPE_MODEL_ID,
   revision = MODELSCOPE_REVISION,
   timeoutMs = 5000,
+  agent,
 } = {}) {
   return new Promise((resolve, reject) => {
     const encodedModelId = modelId.split("/").map(encodeURIComponent).join("/");
@@ -131,6 +133,7 @@ function triggerModelScopeSnapshotCount({
       method: "GET",
       headers: buildModelScopeSnapshotHeaders(env),
       timeout: timeoutMs,
+      agent,
     }, (res) => {
       const status = res.statusCode || 0;
       res.resume();
@@ -148,7 +151,7 @@ function triggerModelScopeSnapshotCount({
   });
 }
 
-function requestText(urlStr, { timeoutMs = 2500, env = process.env } = {}) {
+function requestText(urlStr, { timeoutMs = 2500, env = process.env, agent } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const u = new URL(urlStr);
@@ -161,6 +164,7 @@ function requestText(urlStr, { timeoutMs = 2500, env = process.env } = {}) {
       method: "GET",
       headers: { "user-agent": env.MINICPM_USER_AGENT || "MiniCPM-Desk-Pet/1.0" },
       timeout: timeoutMs,
+      agent,
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -185,19 +189,19 @@ function requestText(urlStr, { timeoutMs = 2500, env = process.env } = {}) {
   });
 }
 
-async function detectCountry({ env = process.env, requestTextImpl = requestText } = {}) {
+async function detectCountry({ env = process.env, requestTextImpl = requestText, agent } = {}) {
   const override = env.MINICPM_MODEL_COUNTRY;
   const parsedOverride = parseCountryText(override);
   if (parsedOverride) return { country: parsedOverride, source: "env" };
 
   try {
-    const trace = await requestTextImpl("https://www.cloudflare.com/cdn-cgi/trace", { timeoutMs: 2500, env });
+    const trace = await requestTextImpl("https://www.cloudflare.com/cdn-cgi/trace", { timeoutMs: 2500, env, agent });
     const country = parseCloudflareTrace(trace);
     if (country) return { country, source: "cloudflare" };
   } catch {}
 
   try {
-    const country = parseCountryText(await requestTextImpl("https://ipapi.co/country/", { timeoutMs: 2500, env }));
+    const country = parseCountryText(await requestTextImpl("https://ipapi.co/country/", { timeoutMs: 2500, env, agent }));
     if (country) return { country, source: "ipapi" };
   } catch {}
 
@@ -226,6 +230,7 @@ function downloadUrlToFile({
   env = process.env,
   onProgress,
   maxRedirects = 8,
+  agent,
 }) {
   return new Promise((resolve, reject) => {
     const tmp = `${destination}.part`;
@@ -249,6 +254,7 @@ function downloadUrlToFile({
         path: u.pathname + (u.search || ""),
         method: "GET",
         headers: buildHeaders(providerId, currentUrl, env),
+        agent,
       }, (res) => {
         const status = res.statusCode || 0;
         if ([301, 302, 303, 307, 308].includes(status) && res.headers.location) {
@@ -316,6 +322,7 @@ async function downloadMiniCpmModel({
   requestTextImpl = requestText,
   downloadImpl = downloadUrlToFile,
   snapshotCountImpl = triggerModelScopeSnapshotCount,
+  agent,
 } = {}) {
   if (!destinationDir) throw new Error("destinationDir is required");
   ensureDir(destinationDir);
@@ -327,10 +334,14 @@ async function downloadMiniCpmModel({
     }
   } catch {}
 
+  if (agent === undefined) {
+    agent = createProxyAgent("https://huggingface.co", env);
+  }
+
   const forcedProvider = normalizeProvider(env.MINICPM_MODEL_PROVIDER);
   const geo = forcedProvider
     ? { country: null, source: "env-provider" }
-    : await detectCountry({ env, requestTextImpl });
+    : await detectCountry({ env, requestTextImpl, agent });
   const selected = forcedProvider || selectProviderForCountry(
     geo.country,
     env.MINICPM_MODEL_PROVIDER_FALLBACK || "modelscope"
@@ -346,7 +357,7 @@ async function downloadMiniCpmModel({
       }
       if (providerId === "modelscope" && typeof snapshotCountImpl === "function") {
         try {
-          await snapshotCountImpl({ env });
+          await snapshotCountImpl({ env, agent });
           if (typeof onProgress === "function") {
             onProgress({ phase: "snapshot-count", provider: providerId, ok: true });
           }
@@ -367,6 +378,7 @@ async function downloadMiniCpmModel({
         destination,
         env,
         onProgress,
+        agent,
       });
       if (typeof onProgress === "function") {
         onProgress({ phase: "complete", provider: providerId, file: MODEL_FILENAME, path: destination });

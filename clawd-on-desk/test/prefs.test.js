@@ -678,6 +678,8 @@ describe("prefs.validate", () => {
       togglePet: "CommandOrControl+Shift+Alt+C",
       permissionAllow: "CommandOrControl+Shift+Y",
       permissionDeny: "CommandOrControl+Shift+N",
+      toggleChat: "CommandOrControl+Shift+M",
+      toggleThinking: "CommandOrControl+Shift+T",
     });
   });
 
@@ -691,6 +693,8 @@ describe("prefs.validate", () => {
       togglePet: "CommandOrControl+K",
       permissionAllow: "CommandOrControl+Shift+Y",
       permissionDeny: "CommandOrControl+Shift+N",
+      toggleChat: "CommandOrControl+Shift+M",
+      toggleThinking: "CommandOrControl+Shift+T",
     });
   });
 
@@ -706,6 +710,8 @@ describe("prefs.validate", () => {
       togglePet: "CommandOrControl+Shift+Alt+C",
       permissionAllow: "CommandOrControl+Shift+Y",
       permissionDeny: "CommandOrControl+Shift+N",
+      toggleChat: "CommandOrControl+Shift+M",
+      toggleThinking: "CommandOrControl+Shift+T",
     });
   });
 
@@ -721,6 +727,8 @@ describe("prefs.validate", () => {
       togglePet: "CommandOrControl+K",
       permissionAllow: "CommandOrControl+Shift+Y",
       permissionDeny: "CommandOrControl+Shift+N",
+      toggleChat: "CommandOrControl+Shift+M",
+      toggleThinking: "CommandOrControl+Shift+T",
     });
   });
 

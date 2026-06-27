@@ -458,11 +458,36 @@ class Sidecar {
 
   async ensureRunning(initialModelDir) {
     if (await this.isHealthy(initialModelDir)) return { status: "already-running" };
+
+    // Gateway may be running but without a loaded model (alive=false).
+    // Hot-load via /api/load-model instead of spawning a second process
+    // which would fail with EADDRINUSE on the same port.
+    if (this.proc && this.modelPresent(initialModelDir)) {
+      const gguf = this._resolveGgufPath(initialModelDir);
+      if (gguf) {
+        const loaded = await this.loadModel(gguf);
+        if (loaded && loaded.ok) return { status: "model-loaded" };
+      }
+    }
+
     if (this.starting) return this.starting;
     this.starting = this._spawnAndWait(initialModelDir).finally(() => {
       this.starting = null;
     });
     return this.starting;
+  }
+
+  _resolveGgufPath(dirOrFile) {
+    try {
+      const st = fs.statSync(dirOrFile);
+      if (st.isFile() && dirOrFile.toLowerCase().endsWith(".gguf")) return dirOrFile;
+      if (st.isDirectory()) {
+        const entries = fs.readdirSync(dirOrFile)
+          .filter((n) => n.toLowerCase().endsWith(".gguf"));
+        if (entries.length) return path.join(dirOrFile, entries[0]);
+      }
+    } catch {}
+    return null;
   }
 
   async isHealthy(initialModelDir) {

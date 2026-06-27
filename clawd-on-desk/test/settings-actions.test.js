@@ -1181,6 +1181,8 @@ describe("shortcut commands", () => {
           togglePet: () => {},
           permissionAllow: () => {},
           permissionDeny: () => {},
+          toggleChat: () => {},
+          toggleThinking: () => {},
         },
         getShortcutFailure: (actionId) => failures.get(actionId) || null,
         clearShortcutFailure: (actionId) => failures.delete(actionId),

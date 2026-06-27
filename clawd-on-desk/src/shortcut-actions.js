@@ -25,6 +25,16 @@
       defaultAccelerator: "CommandOrControl+Shift+N",
       labelKey: "shortcutLabelPermissionDeny",
     }),
+    toggleChat: Object.freeze({
+      persistent: true,
+      defaultAccelerator: "CommandOrControl+Shift+M",
+      labelKey: "shortcutLabelToggleChat",
+    }),
+    toggleThinking: Object.freeze({
+      persistent: true,
+      defaultAccelerator: "CommandOrControl+Shift+T",
+      labelKey: "shortcutLabelToggleThinking",
+    }),
   });
 
   const SHORTCUT_ACTION_IDS = Object.freeze(Object.keys(SHORTCUT_ACTIONS));
@@ -304,11 +314,11 @@
     if (!Array.isArray(modifiers) || modifiers.length === 0) return "";
     const labels = modifiers.map((modifier) => {
       if (modifier === "CommandOrControl") return isMac ? "⌘" : "Ctrl";
-      if (modifier === "Shift") return isMac ? "⇧" : "Shift";
+      if (modifier === "Shift") return "Shift";
       if (modifier === "Alt") return isMac ? "⌥" : "Alt";
       return modifier;
     });
-    return isMac ? labels.join("") + "…" : labels.join("+") + "+…";
+    return labels.join("+") + "+…";
   }
 
   function formatAcceleratorLabel(
@@ -321,7 +331,7 @@
 
     const displayParts = parsed.modifiers.map((modifier) => {
       if (modifier === "CommandOrControl") return isMac ? "⌘" : "Ctrl";
-      if (modifier === "Shift") return isMac ? "⇧" : "Shift";
+      if (modifier === "Shift") return "Shift";
       if (modifier === "Alt") return isMac ? "⌥" : "Alt";
       return modifier;
     });
@@ -334,7 +344,7 @@
       Right: isMac ? "→" : "Right",
     };
     displayParts.push(keyLabelMap[parsed.key] || parsed.key);
-    return isMac ? displayParts.join("") : displayParts.join("+");
+    return displayParts.join("+");
   }
 
   function validateShortcutMapShape(value) {

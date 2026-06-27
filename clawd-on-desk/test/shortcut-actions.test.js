@@ -19,10 +19,12 @@ const {
 
 describe("shortcut-actions metadata", () => {
   it("exposes all known shortcut action ids", () => {
-    assert.deepStrictEqual(SHORTCUT_ACTION_IDS, ["togglePet", "permissionAllow", "permissionDeny"]);
+    assert.deepStrictEqual(SHORTCUT_ACTION_IDS, ["togglePet", "permissionAllow", "permissionDeny", "toggleChat", "toggleThinking"]);
     assert.strictEqual(SHORTCUT_ACTIONS.togglePet.persistent, true);
     assert.strictEqual(SHORTCUT_ACTIONS.permissionAllow.persistent, false);
     assert.strictEqual(SHORTCUT_ACTIONS.permissionDeny.persistent, false);
+    assert.strictEqual(SHORTCUT_ACTIONS.toggleChat.persistent, true);
+    assert.strictEqual(SHORTCUT_ACTIONS.toggleThinking.persistent, true);
   });
 
   it("builds fresh default shortcut maps", () => {
@@ -33,6 +35,8 @@ describe("shortcut-actions metadata", () => {
       togglePet: "CommandOrControl+Shift+Alt+C",
       permissionAllow: "CommandOrControl+Shift+Y",
       permissionDeny: "CommandOrControl+Shift+N",
+      toggleChat: "CommandOrControl+Shift+M",
+      toggleThinking: "CommandOrControl+Shift+T",
     });
   });
 });
@@ -143,7 +147,7 @@ describe("buildAcceleratorFromEvent", () => {
     );
     assert.strictEqual(
       formatAcceleratorPartial(["CommandOrControl", "Shift"], { isMac: true }),
-      "⌘⇧…"
+      "⌘+Shift+…"
     );
     assert.strictEqual(
       formatAcceleratorPartial(["CommandOrControl", "Alt"]),
@@ -186,11 +190,11 @@ describe("formatAcceleratorLabel", () => {
   it("formats labels for macOS", () => {
     assert.strictEqual(
       formatAcceleratorLabel("CommandOrControl+Shift+Alt+C", { isMac: true }),
-      "⌘⇧⌥C"
+      "⌘+Shift+⌥+C"
     );
     assert.strictEqual(
       formatAcceleratorLabel("Shift+ArrowUp", { isMac: true }),
-      "⇧↑"
+      "Shift+↑"
     );
   });
 });
@@ -203,6 +207,8 @@ describe("normalizeShortcuts", () => {
         togglePet: "CommandOrControl+K",
         permissionAllow: "CommandOrControl+Shift+Y",
         permissionDeny: "CommandOrControl+Shift+N",
+        toggleChat: "CommandOrControl+Shift+M",
+        toggleThinking: "CommandOrControl+Shift+T",
       }
     );
   });
@@ -218,6 +224,8 @@ describe("normalizeShortcuts", () => {
         togglePet: null,
         permissionAllow: null,
         permissionDeny: null,
+        toggleChat: "CommandOrControl+Shift+M",
+        toggleThinking: "CommandOrControl+Shift+T",
       }
     );
   });
@@ -244,6 +252,8 @@ describe("normalizeShortcuts", () => {
         togglePet: "CommandOrControl+K",
         permissionAllow: "CommandOrControl+Shift+Y",
         permissionDeny: "CommandOrControl+Shift+N",
+        toggleChat: "CommandOrControl+Shift+M",
+        toggleThinking: "CommandOrControl+Shift+T",
       }
     );
   });

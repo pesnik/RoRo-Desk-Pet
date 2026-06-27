@@ -311,6 +311,19 @@ let _minicpmChat = null;
 let _minicpmOnboarding = null;
 const shortcutHandlers = {
   togglePet: () => togglePetVisibility(),
+  toggleChat: () => {
+    if (_minicpmChat && typeof _minicpmChat.toggle === "function") _minicpmChat.toggle();
+  },
+  toggleThinking: () => {
+    try {
+      if (_minicpmChat && typeof _minicpmChat.isOpen === "function" && !_minicpmChat.isOpen()) {
+        _minicpmChat.toggle();
+      }
+      if (_minicpmChat && typeof _minicpmChat.toggleThinking === "function") {
+        _minicpmChat.toggleThinking();
+      }
+    } catch {}
+  },
 };
 const _settingsController = createSettingsController({
   prefsPath: PREFS_PATH,
@@ -3660,24 +3673,6 @@ if (!gotTheLock) {
 
     // Register persistent global shortcuts from the validated prefs snapshot.
     shortcutRuntime.registerPersistentShortcutsFromSettings();
-
-    try {
-      globalShortcut.register("CommandOrControl+Shift+M", () => {
-        if (_minicpmChat && typeof _minicpmChat.toggle === "function") _minicpmChat.toggle();
-      });
-      globalShortcut.register("CommandOrControl+Shift+T", () => {
-        try {
-          if (_minicpmChat && typeof _minicpmChat.isOpen === "function" && !_minicpmChat.isOpen()) {
-            _minicpmChat.toggle();
-          }
-          if (_minicpmChat && typeof _minicpmChat.toggleThinking === "function") {
-            _minicpmChat.toggleThinking();
-          }
-        } catch {}
-      });
-    } catch (err) {
-      console.warn("Clawd: failed to register MiniCPM shortcuts:", err && err.message);
-    }
 
     if (!shouldShowMinicpmOnboarding) {
       setTimeout(() => {
