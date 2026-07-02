@@ -6,6 +6,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const { postStateToRunningServer, readHostPrefix } = require("./server-config");
+const { fitStateBodyToByteBudget } = require("./state-payload-size");
 const { extractClaudeContextUsageFromEntries } = require("./context-usage");
 const { createPidResolver, readStdinJson, getPlatformConfig } = require("./shared-process");
 
@@ -464,9 +465,22 @@ function main() {
     .then((payload) => {
       const body = buildStateBody(event, payload || {}, resolve);
       if (!body) process.exit(0);
+      // Byte-fit the body so a long CJK assistant_last_output can't push it past
+      // the server's /state cap and trigger a headerless 413 (read back as
+      // posted=false, dropping the happy completion). hooks/state-payload-size.js.
+      const fitted = fitStateBodyToByteBudget(body);
+      // Completion events (Stop) must actually reach Clawd to fire the happy
+      // animation, but they are low-frequency. A busy system (e.g. right after a
+      // dense burst of tool calls) can push the local POST past the tight 100ms
+      // budget, silently dropping the celebration. Give Stop a generous timeout:
+      // connection-refused (Clawd not running) still fails instantly, so an idle
+      // machine is never penalized — only a live-but-slow Clawd uses the
+      // headroom. High-frequency events keep 100ms so they never stall the agent.
+      const isCompletionEvent = body.event === "Stop";
+      const statePostTimeoutMs = isCompletionEvent ? 1500 : 100;
       postStateToRunningServer(
-        JSON.stringify(body),
-        { timeoutMs: 100 },
+        JSON.stringify(fitted.body),
+        { timeoutMs: statePostTimeoutMs },
         () => process.exit(0)
       );
     })
