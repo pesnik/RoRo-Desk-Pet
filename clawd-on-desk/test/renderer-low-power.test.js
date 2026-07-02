@@ -191,7 +191,7 @@ describe("renderer low-power idle mode", () => {
     assert.ok(source.includes("if (!lowPowerIdleMode && !lowPowerSvgPaused) return;"));
   });
 
-  it("does not treat passive eye or pointer tracking as low-power activity", () => {
+  it("treats new mouse movement (but not passive pointer tracking) as low-power activity", () => {
     const source = readNormalized(RENDERER);
     const eyeHandler = matchSource(
       source,
@@ -204,7 +204,10 @@ describe("renderer low-power idle mode", () => {
       "missing Cloudling pointer handler"
     )[1];
 
-    assert.ok(!eyeHandler.includes("noteLowPowerActivity()"));
+    // #557: a real cursor move must wake low-power eye tracking, so onEyeMove
+    // now notes activity (gated on lowPowerIdleMode). Passive pointer tracking
+    // still must not count as activity.
+    assert.ok(eyeHandler.includes("if (lowPowerIdleMode) noteLowPowerActivity()"));
     assert.ok(!pointerHandler.includes("noteLowPowerActivity()"));
   });
 

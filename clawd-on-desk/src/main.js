@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, ipcMain, globalShortcut, nativeTheme, dialog, shell, nativeImage, powerSaveBlocker, clipboard } = require("electron");
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, nativeTheme, dialog, shell, nativeImage, powerSaveBlocker, powerMonitor, clipboard } = require("electron");
 // ── Linux/Wayland: relaunch under XWayland so the pet is draggable (issue #441) ──
 // Native Wayland ignores client-side window positioning and blocks global cursor
 // queries, so the pet spawns centered, can't be dragged, and has no tracking;
@@ -82,6 +82,8 @@ const { registerSettingsIpc } = require("./settings-ipc");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { registerSessionIpc } = require("./session-ipc");
 const { registerPetInteractionIpc } = require("./pet-interaction-ipc");
+const { createSystemWakeRecovery } = require("./system-wake-recovery");
+const { formatLocalTimestamp } = require("./log-timestamp");
 const { launchClaudeSession, openTerminalAt } = require("./launch-claude");
 const { dialog: electronDialog } = require("electron");
 const initPermission = require("./permission");
@@ -154,6 +156,15 @@ if (isWin) {
     console.warn("Clawd: koffi/AllowSetForegroundWindow not available:", err.message);
   }
 }
+
+// ── Windows: foreground-fullscreen probe (suppress topmost over games) ──
+// Best-effort; degrades to "never fullscreen" if koffi/user32 is unavailable,
+// so a broken probe can never hide the pet.
+const { createForegroundFullscreenProbe } = require("./win-fullscreen-detect");
+const _isForegroundFullscreen = createForegroundFullscreenProbe({
+  isWin,
+  onError: (err) => console.warn("Clawd: win-fullscreen-detect not available:", err && err.message),
+});
 
 // ── Windows: switch the dev console to UTF-8 ──
 //
@@ -291,6 +302,7 @@ function _restartClawdNow() {
 let shortcutRuntime = null;
 let themeRuntime = null;
 let agentRuntime = null;
+let systemWakeRecovery = null;
 let floatingWindowRuntime = null;
 let codexPetMain = null;
 let telegramApprovalSidecar = null;
@@ -829,6 +841,7 @@ let keepAwakeWhileWorking = _settingsController.get("keepAwakeWhileWorking");
 let allowEdgePinningCached = _settingsController.get("allowEdgePinning");
 let disableMiniModeCached = _settingsController.get("disableMiniMode");
 let keepSizeAcrossDisplaysCached = _settingsController.get("keepSizeAcrossDisplays");
+let fullscreenOverlayCached = _settingsController.get("fullscreenOverlay");
 let textScale = _settingsController.get("textScale");
 let textScaleByDisplay = _settingsController.get("textScaleByDisplay");
 // Transient slider-drag override for ONE display — the one the settings
@@ -1193,6 +1206,20 @@ function beginDragSnapshot() { return petWindowRuntime.beginDragSnapshot(); }
 function clearDragSnapshot() { return petWindowRuntime.clearDragSnapshot(); }
 function moveWindowForDrag() { return petWindowRuntime.moveWindowForDrag(); }
 
+// Windows-only (#538 drag focus-steal): the topmost watchdog calls this each
+// tick with the inverse of the fullscreen state. While a fullscreen app owns
+// the foreground we drop the hit window's activation so a click on the pet
+// can't steal focus from an exclusive-fullscreen game and minimize it; we
+// restore it when fullscreen ends because dragging needs activation (#545).
+// Idempotent via isFocusable() so the per-tick call is a no-op when unchanged.
+function setHitWinFocusable(focusable) {
+  if (!isWin) return;
+  if (!hitWin || hitWin.isDestroyed() || typeof hitWin.setFocusable !== "function") return;
+  const next = !!focusable;
+  if (typeof hitWin.isFocusable === "function" && hitWin.isFocusable() === next) return;
+  hitWin.setFocusable(next);
+}
+
 // ── Mini Mode — delegated to src/mini.js ──
 // Initialized after state module (needs applyState, resolveDisplayState, etc.)
 // See _mini initialization below
@@ -1213,6 +1240,9 @@ const topmostRuntime = createTopmostRuntime({
   isDragLocked: () => petWindowRuntime.isDragLocked(),
   isMiniAnimating: () => _mini.getIsAnimating(),
   isMiniTransitioning: () => _mini.getMiniTransitioning(),
+  isForegroundFullscreen: () => _isForegroundFullscreen(),
+  getFullscreenOverlay: () => fullscreenOverlayCached,
+  setHitWinFocusable,
   keepOutOfTaskbar,
   setForceEyeResend,
   applyPetWindowPosition,
@@ -1225,6 +1255,7 @@ const {
   scheduleHwndRecovery,
   guardAlwaysOnTop,
   startTopmostWatchdog,
+  startFocusablePoll,
 } = topmostRuntime;
 
 // ── Permission bubble — delegated to src/permission.js ──
@@ -1529,6 +1560,7 @@ const _tickCtx = {
   get dragLocked() { return petWindowRuntime.isDragLocked(); },
   get menuOpen() { return menuOpen; },
   get idlePaused() { return idlePaused; },
+  get lowPowerIdleMode() { return lowPowerIdleMode; },
   get lowPowerIdlePaused() { return lowPowerIdlePaused; },
   get isAnimating() { return _mini.getIsAnimating(); },
   get miniSleepPeeked() { return _mini.getMiniSleepPeeked(); },
@@ -1796,7 +1828,7 @@ function updateLog(msg) {
 function sessionLog(msg) {
   if (!sessionDebugLog) return;
   const { rotatedAppend } = require("./log-rotate");
-  rotatedAppend(sessionDebugLog, `[${new Date().toISOString()}] ${msg}\n`);
+  rotatedAppend(sessionDebugLog, `[${formatLocalTimestamp()}] ${msg}\n`);
 }
 
 ipcMain.on("sound-playback-error", (_event, payload) => {
@@ -2970,6 +3002,7 @@ const SETTINGS_MIRROR_SETTERS = {
   soundMuted: (v) => { soundMuted = v; }, soundVolume: (v) => { soundVolume = v; }, lowPowerIdleMode: (v) => { lowPowerIdleMode = v; },
   keepAwakeWhileWorking: (v) => { keepAwakeWhileWorking = v; },
   allowEdgePinning: (v) => { allowEdgePinningCached = v; }, disableMiniMode: (v) => { disableMiniModeCached = v; }, keepSizeAcrossDisplays: (v) => { keepSizeAcrossDisplaysCached = v; resetKeepSizeFrozen(); },
+  fullscreenOverlay: (v) => { fullscreenOverlayCached = v; },
   freeRoam: (v) => { _roam.setEnabled(v); },
   textScale: (v) => { textScale = v; textScalePreview = null; },
   textScaleByDisplay: (v) => { textScaleByDisplay = v; textScalePreview = null; },
@@ -3460,6 +3493,7 @@ function createWindow() {
 
   guardAlwaysOnTop(win);
   startTopmostWatchdog();
+  startFocusablePoll();
 
   // display-metrics-changed fires in bursts during DPI changes and RDP
   // reconnects, and each one re-clamps/repositions the pet — running them all
@@ -3737,6 +3771,23 @@ if (!gotTheLock) {
     } else {
       createWindow();
     }
+    systemWakeRecovery = createSystemWakeRecovery({
+      powerMonitor,
+      ipcMain,
+      sendToRenderer,
+      onRecovered: () => {
+        setLowPowerIdlePaused(false);
+        // The main mirror can already be false while the renderer still owns a
+        // paused SVG. Always resend the latest cursor position after receipt.
+        setForceEyeResend(true);
+      },
+      log: sessionLog,
+      onError: (err) => safeConsoleError(
+        "Clawd: system wake recovery failed:",
+        err && err.message ? err.message : err
+      ),
+    });
+    systemWakeRecovery.start();
     // macOS: bridge the OS app-hidden state (⌘H / Dock right-click → 隐藏) to the
     // pet. Pet windows are setCanHide:NO, so the OS marks the app hidden but the
     // windows refuse to vanish, and an inactive-app Dock Hide fires no
@@ -3802,6 +3853,7 @@ if (!gotTheLock) {
 
   app.on("before-quit", () => {
     isQuitting = true;
+    if (systemWakeRecovery) systemWakeRecovery.dispose();
     try { stopUpdateScheduler(); } catch {}
     releasePowerSaveBlocker();
     flushRuntimeStateToPrefs();
