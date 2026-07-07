@@ -119,7 +119,7 @@
       ]
     },
     "linux": {
-      "maintainer": "OpenBMB <opensource@openbmb.org>",
+      "maintainer": "OpenBMB <contact@openbmb.cn>",
       "icon": "assets/icons",
       "category": "Utility",
       "artifactName": "MiniCPM-Desk-Pet-${version}-${arch}.${ext}",
