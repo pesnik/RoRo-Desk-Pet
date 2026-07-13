@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .clawd_state import ClawdBridge
+from .hermes_client import HermesClient
 from .llama_client import LlamaServer, detect_backend
 from .log_setup import get_logger
 from .openrouter_client import OpenRouterClient
@@ -270,16 +271,19 @@ def build_app(
     threads: Optional[int] = None,
     backend: str = "llama.cpp",
     openrouter_model: str = "openai/gpt-4o-mini",
+    hermes_url: str = "http://127.0.0.1:8642/v1",
+    hermes_model: str = "hermes-agent",
 ) -> FastAPI:
     log = get_logger()
     bridge = ClawdBridge(enabled=True, debug=False)
 
     is_openrouter = backend == "openrouter"
+    is_hermes = backend == "hermes"
 
     # Resolve the adapter root so /api/adapters can scan it; we still
     # show the full list to the UI even when none are loaded yet, so
     # users can browse + activate any LoRA from Settings.
-    adapter_root = _resolve_adapter_root(initial_model) if not is_openrouter else None
+    adapter_root = _resolve_adapter_root(initial_model) if not is_openrouter and not is_hermes else None
 
     # Boot-time LoRA load is now *opt-in*: only the LoRA the Electron
     # host has persisted as the active one (env MINICPM_ACTIVE_ADAPTER)
@@ -290,7 +294,7 @@ def build_app(
     # restart but keeping the steady-state memory minimal.
     _env_active = os.environ.get("MINICPM_ACTIVE_ADAPTER", "").strip()
     initial_active: Optional[Path] = None
-    if _env_active and not is_openrouter:
+    if _env_active and not is_openrouter and not is_hermes:
         try:
             cand = Path(_env_active).expanduser().resolve(strict=True)
             if cand.suffix.lower() == ".gguf":
@@ -304,6 +308,12 @@ def build_app(
         server = OpenRouterClient(
             api_key=os.environ.get("OPENROUTER_API_KEY", ""),
             model=openrouter_model,
+        )
+    elif is_hermes:
+        server = HermesClient(
+            api_key=os.environ.get("HERMES_API_KEY", "change-me-local-dev"),
+            base_url=hermes_url,
+            model=hermes_model,
         )
     else:
         server = LlamaServer(
@@ -338,6 +348,14 @@ def build_app(
                 except Exception as exc:
                     startup_error = str(exc)
                     log.exception("OpenRouter client start failed: %s", exc)
+        elif is_hermes:
+            # Hermes: no local model to wait for — just start the client.
+            try:
+                await server.start()
+                startup_error = None
+            except Exception as exc:
+                startup_error = str(exc)
+                log.exception("Hermes client start failed: %s", exc)
         else:
             # Don't fail boot when the model isn't on disk yet — onboarding
             # downloads it via /api/update-apply and only then calls
@@ -836,7 +854,7 @@ def build_app(
 
 # Type alias for the unified backend — both LlamaServer and OpenRouterClient
 # expose the same stream_chat() / health() / alive interface.
-AnyBackend = LlamaServer | OpenRouterClient
+AnyBackend = LlamaServer | OpenRouterClient | HermesClient
 
 
 async def _stream_chat(

@@ -26,7 +26,7 @@ from gateway.server import build_app
 from gateway.updater import DEFAULT_SOURCE
 
 
-BACKEND_CHOICES = ("llama.cpp", "openrouter")
+BACKEND_CHOICES = ("llama.cpp", "openrouter", "hermes")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -42,12 +42,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--backend",
         default=os.environ.get("MINICPM_BACKEND", "llama.cpp"),
         choices=BACKEND_CHOICES,
-        help="Inference backend: llama.cpp (local) or openrouter (cloud API)",
+        help="Inference backend: llama.cpp (local), openrouter (cloud API), or hermes (Hermes Agent)",
     )
     p.add_argument(
         "--openrouter-model",
         default=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
         help="OpenRouter model ID (e.g. openai/gpt-4o-mini)",
+    )
+    p.add_argument(
+        "--hermes-url",
+        default=os.environ.get("HERMES_API_URL", "http://127.0.0.1:8642/v1"),
+        help="Hermes Agent API URL (default: http://127.0.0.1:8642/v1)",
+    )
+    p.add_argument(
+        "--hermes-model",
+        default=os.environ.get("HERMES_MODEL", "hermes-agent"),
+        help="Hermes Agent model ID (default: hermes-agent)",
     )
     p.add_argument(
         "--update-source",
@@ -124,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         threads=(args.threads or None),
         backend=backend,
         openrouter_model=args.openrouter_model,
+        hermes_url=args.hermes_url,
+        hermes_model=args.hermes_model,
     )
 
     uvicorn.run(
