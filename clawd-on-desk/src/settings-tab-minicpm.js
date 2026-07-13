@@ -343,6 +343,7 @@
       },
     ));
 
+    // Backend selector (llama.cpp / OpenRouter / Hermes)
     const backendMode = window.minicpmSettings.getBackendMode
       ? window.minicpmSettings.getBackendMode()
       : null;
@@ -396,6 +397,50 @@
         row.appendChild(ctl);
         rows.appendChild(row);
       }
+    }
+
+    // ── Inference backend row (llama.cpp / OpenRouter / Hermes) ──────
+    {
+      const row = el("div", { className: "row" });
+      const text = el("div", { className: "row-text" });
+      text.appendChild(el("span", { className: "row-label" }, t("minicpmRowBackend")));
+      text.appendChild(el("span", { className: "row-desc" }, t("minicpmRowBackendDesc")));
+      row.appendChild(text);
+      const segmented = el("div", { className: "segmented minicpm-backend-segmented" });
+      const current = backendMode || "llama.cpp";
+      for (const mode of ["llama.cpp", "openrouter", "hermes"]) {
+        const btn = el("button", {
+          type: "button",
+          className: current === mode ? "active" : "",
+          onClick: async () => {
+            if (btn.disabled || current === mode) return;
+            Array.from(segmented.querySelectorAll("button")).forEach((b) => { b.disabled = true; });
+            try {
+              const ret = await window.minicpmSettings.setBackendMode(mode);
+              if (ret && ret.ok === false) {
+                if (ops && typeof ops.showToast === "function") {
+                  ops.showToast(t("toastSaveFailed") + (ret.error || "unknown error"), { error: true });
+                }
+              }
+            } catch (err) {
+              if (ops && typeof ops.showToast === "function") {
+                ops.showToast(t("toastSaveFailed") + (err && err.message || ""), { error: true });
+              }
+            } finally {
+              void ctx.refreshAll();
+            }
+          },
+        }, t(
+          mode === "llama.cpp" ? "minicpmBackendLlamaCpp"
+            : mode === "openrouter" ? "minicpmBackendOpenRouter"
+            : "minicpmBackendHermes"
+        ));
+        segmented.appendChild(btn);
+      }
+      const ctl = el("div", { className: "row-control" });
+      ctl.appendChild(segmented);
+      row.appendChild(ctl);
+      rows.appendChild(row);
     }
     box.appendChild(section);
   }
