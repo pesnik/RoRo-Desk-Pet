@@ -813,7 +813,9 @@ def build_app(
             return JSONResponse({"error": "messages is empty"}, status_code=400)
         if not server.alive:
             err_msg = (
-                "OpenRouter API key not set — add OPENROUTER_API_KEY to your environment"
+                "Hermes API server not running — start Hermes gateway first"
+                if is_hermes
+                else "OpenRouter API key not set — add OPENROUTER_API_KEY to your environment"
                 if is_openrouter
                 else "llama-server not running — open Onboarding to download the model"
             )

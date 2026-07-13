@@ -1297,6 +1297,17 @@ module.exports = function initMinicpmChat(ctx) {
   // session. `null` means "boot Base, no --lora".
   refreshActiveAdapterPath();
 
+  // Restore persisted backend mode (llama.cpp / openrouter / hermes) from
+  // minicpm-prefs.json so the user's Settings choice survives restarts.
+  if (!process.env.MINICPM_BACKEND) {
+    try {
+      const mp = readMinicpmPrefsRaw();
+      if (mp && typeof mp.backend_mode === "string" && mp.backend_mode.trim()) {
+        process.env.MINICPM_BACKEND = mp.backend_mode.trim();
+      }
+    } catch {}
+  }
+
   let bubble = null;
   let activeSide = "right";
   // Updated from /api/health after the sidecar comes online — drives the
@@ -2561,6 +2572,16 @@ module.exports = function initMinicpmChat(ctx) {
         }
         return { ok: false, device, error: localizeError(err) };
       }
+    },
+    "minicpm-settings:set-backend-mode": async (_evt, payload) => {
+      const mode = (payload && payload.mode) || "llama.cpp";
+      const validModes = ["llama.cpp", "openrouter", "hermes"];
+      if (!validModes.includes(mode)) {
+        return { ok: false, error: `Invalid backend mode: ${mode}` };
+      }
+      process.env.MINICPM_BACKEND = mode;
+      mergeMinicpmPrefs({ backend_mode: mode });
+      return { ok: true, mode };
     },
     "minicpm-settings:restart-sidecar": async () => {
       try {
