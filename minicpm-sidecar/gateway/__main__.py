@@ -26,6 +26,9 @@ from gateway.server import build_app
 from gateway.updater import DEFAULT_SOURCE
 
 
+BACKEND_CHOICES = ("llama.cpp", "openrouter")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="minicpm-sidecar", add_help=True)
     p.add_argument("--host", default=os.environ.get("MINICPM_HOST", "127.0.0.1"))
@@ -34,6 +37,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--model",
         default=os.environ.get("MINICPM_MODEL_DIR") or os.environ.get("MINICPM_MODEL", ""),
         help=".gguf file to load (or directory containing exactly one)",
+    )
+    p.add_argument(
+        "--backend",
+        default=os.environ.get("MINICPM_BACKEND", "llama.cpp"),
+        choices=BACKEND_CHOICES,
+        help="Inference backend: llama.cpp (local) or openrouter (cloud API)",
+    )
+    p.add_argument(
+        "--openrouter-model",
+        default=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+        help="OpenRouter model ID (e.g. openai/gpt-4o-mini)",
     )
     p.add_argument(
         "--update-source",
@@ -100,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     ParentWatchdog(parent_pid).start()
 
     model_path = _resolve_model_arg(args.model)
+    backend = args.backend
 
     app = build_app(
         initial_model=model_path,
@@ -107,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         ctx_size=args.ctx_size,
         n_gpu_layers=args.gpu_layers,
         threads=(args.threads or None),
+        backend=backend,
+        openrouter_model=args.openrouter_model,
     )
 
     uvicorn.run(

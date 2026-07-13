@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from .clawd_state import ClawdBridge
 from .llama_client import LlamaServer, detect_backend
 from .log_setup import get_logger
+from .openrouter_client import OpenRouterClient
 from .think_filter import ThinkBlockFilter
 from .updater import DEFAULT_SOURCE as DEFAULT_UPDATE_SOURCE
 from .updater import ModelUpdater
@@ -267,14 +268,18 @@ def build_app(
     ctx_size: int = 4096,
     n_gpu_layers: int = -1,
     threads: Optional[int] = None,
+    backend: str = "llama.cpp",
+    openrouter_model: str = "openai/gpt-4o-mini",
 ) -> FastAPI:
     log = get_logger()
     bridge = ClawdBridge(enabled=True, debug=False)
 
+    is_openrouter = backend == "openrouter"
+
     # Resolve the adapter root so /api/adapters can scan it; we still
     # show the full list to the UI even when none are loaded yet, so
     # users can browse + activate any LoRA from Settings.
-    adapter_root = _resolve_adapter_root(initial_model)
+    adapter_root = _resolve_adapter_root(initial_model) if not is_openrouter else None
 
     # Boot-time LoRA load is now *opt-in*: only the LoRA the Electron
     # host has persisted as the active one (env MINICPM_ACTIVE_ADAPTER)
@@ -285,7 +290,7 @@ def build_app(
     # restart but keeping the steady-state memory minimal.
     _env_active = os.environ.get("MINICPM_ACTIVE_ADAPTER", "").strip()
     initial_active: Optional[Path] = None
-    if _env_active:
+    if _env_active and not is_openrouter:
         try:
             cand = Path(_env_active).expanduser().resolve(strict=True)
             if cand.suffix.lower() == ".gguf":
@@ -295,13 +300,19 @@ def build_app(
         except FileNotFoundError:
             log.warning("MINICPM_ACTIVE_ADAPTER points at missing file: %s", _env_active)
 
-    server = LlamaServer(
-        model_path=initial_model,
-        ctx_size=ctx_size,
-        n_gpu_layers=n_gpu_layers,
-        threads=threads,
-        adapters=[initial_active] if initial_active else [],
-    )
+    if is_openrouter:
+        server = OpenRouterClient(
+            api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+            model=openrouter_model,
+        )
+    else:
+        server = LlamaServer(
+            model_path=initial_model,
+            ctx_size=ctx_size,
+            n_gpu_layers=n_gpu_layers,
+            threads=threads,
+            adapters=[initial_active] if initial_active else [],
+        )
 
     # In-memory adapter state. Single source of truth for what the
     # Electron app sees as "the active LoRA". Boots from the persisted
@@ -315,19 +326,32 @@ def build_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         nonlocal startup_error
-        # Don't fail boot when the model isn't on disk yet — onboarding
-        # downloads it via /api/update-apply and only then calls
-        # /api/load-model. The pet still wants /api/health to answer 200
-        # in the meantime so the bubble doesn't show a permanent error.
-        if initial_model and Path(initial_model).exists():
-            try:
-                await server.start()
-                startup_error = None
-            except Exception as exc:
-                startup_error = str(exc)
-                log.exception("initial llama-server start failed: %s", exc)
+        if is_openrouter:
+            # OpenRouter: no local model to wait for — just start the client.
+            if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+                startup_error = "OPENROUTER_API_KEY not set"
+                log.warning("OpenRouter backend requested but OPENROUTER_API_KEY is empty")
+            else:
+                try:
+                    await server.start()
+                    startup_error = None
+                except Exception as exc:
+                    startup_error = str(exc)
+                    log.exception("OpenRouter client start failed: %s", exc)
         else:
-            log.info("model not present at startup; waiting for /api/load-model")
+            # Don't fail boot when the model isn't on disk yet — onboarding
+            # downloads it via /api/update-apply and only then calls
+            # /api/load-model. The pet still wants /api/health to answer 200
+            # in the meantime so the bubble doesn't show a permanent error.
+            if initial_model and Path(initial_model).exists():
+                try:
+                    await server.start()
+                    startup_error = None
+                except Exception as exc:
+                    startup_error = str(exc)
+                    log.exception("initial llama-server start failed: %s", exc)
+            else:
+                log.info("model not present at startup; waiting for /api/load-model")
         bridge.post("idle", title="MiniCPM 桌宠")
         try:
             yield
@@ -377,9 +401,26 @@ def build_app(
     @app.get("/api/health")
     async def health():
         sub_health = await server.health()
-        backend = detect_backend()
         adapter = state["current_adapter"]
-        current = backend.get("current") or backend["recommended"]
+        if is_openrouter:
+            model_name = getattr(server, "model", None)
+            return {
+                "ok": True,
+                "alive": server.alive,
+                "backend": "openrouter",
+                "accel": "cloud",
+                "device": "cloud",
+                "dtype": "api",
+                "model_dir": None,
+                "model_name": model_name,
+                "adapter": None,
+                "persona": "default",
+                "llama_server": sub_health,
+                "port": 0,
+                "startup_error": startup_error,
+            }
+        backend_info = detect_backend()
+        current = backend_info.get("current") or backend_info["recommended"]
         return {
             "ok": True,
             "alive": server.alive,
@@ -398,11 +439,24 @@ def build_app(
 
     @app.get("/api/devices")
     def list_devices():
+        if is_openrouter:
+            return {
+                "available": ["cloud"],
+                "recommended": "cloud",
+                "current": "cloud",
+                "experimental": [],
+                "reasons": {"cloud": "OpenRouter cloud API"},
+            }
         info = detect_backend()
         return info
 
     @app.post("/api/set-device")
     async def set_device(payload: dict):
+        if is_openrouter:
+            return JSONResponse(
+                {"error": "device selection is not available for OpenRouter backend"},
+                status_code=400,
+            )
         device = str(payload.get("device") or "").strip().lower()
         if device not in ("metal", "cuda", "cpu", "vulkan", "mps", "auto", ""):
             return JSONResponse({"error": f"unknown device: {device!r}"}, status_code=400)
@@ -423,14 +477,25 @@ def build_app(
 
     @app.get("/api/onboarding")
     def onboarding():
+        if is_openrouter:
+            has_key = bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
+            return {
+                "model_present": has_key,
+                "model_dir": None,
+                "device": "cloud",
+                "dtype": "api",
+                "adapter": None,
+                "persona": "default",
+                "stage_hint": "ready" if has_key else "model-download",
+            }
         path = server.model_path or _get_active_model_path()
         present = path.exists() if path else False
         adapter = state["current_adapter"]
-        backend = detect_backend()
+        backend_info = detect_backend()
         return {
             "model_present": present,
             "model_dir": str(path) if path else None,
-            "device": backend.get("current") or backend["recommended"],
+            "device": backend_info.get("current") or backend_info["recommended"],
             "dtype": "gguf",
             "adapter": str(adapter) if adapter else None,
             "persona": _persona_for(adapter) if adapter else "default",
@@ -441,6 +506,13 @@ def build_app(
 
     @app.get("/api/models")
     def list_models():
+        if is_openrouter:
+            model_name = getattr(server, "model", "unknown")
+            return {
+                "items": [{"name": model_name, "path": model_name}],
+                "current": model_name,
+                "current_name": model_name,
+            }
         items = discover_models(extra_roots)
         current = str(server.model_path) if server.model_path else None
         return {
@@ -452,6 +524,21 @@ def build_app(
     @app.post("/api/load-model")
     async def load_model(payload: dict):
         nonlocal startup_error
+        if is_openrouter:
+            # For OpenRouter, "path" is actually the model ID string
+            model_id = str(payload.get("path") or "").strip()
+            if not model_id:
+                return JSONResponse({"error": "model id is required"}, status_code=400)
+            bridge.post("working", event="LoadModel", title=f"Switch to {model_id}")
+            try:
+                await server.swap_model(str(model_id))
+                startup_error = None
+            except Exception as exc:
+                startup_error = str(exc)
+                bridge.post("error")
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            bridge.post("idle")
+            return {"ok": True, "model_dir": model_id, "model_name": model_id}
         path = str(payload.get("path") or "").strip()
         if not path:
             return JSONResponse({"error": "path is required"}, status_code=400)
@@ -508,6 +595,13 @@ def build_app(
 
     @app.get("/api/adapters")
     def list_adapters():
+        if is_openrouter:
+            return {
+                "items": [],
+                "current": None,
+                "current_name": None,
+                "adapter_dir": "",
+            }
         items = _scan_adapters()
         current = state["current_adapter"]
         return {
@@ -519,6 +613,11 @@ def build_app(
 
     @app.post("/api/load-adapter")
     async def load_adapter(payload: dict):
+        if is_openrouter:
+            return JSONResponse(
+                {"error": "LoRA adapters are not supported on OpenRouter"},
+                status_code=400,
+            )
         raw = payload.get("path")
         # path = null  →  deactivate any LoRA (back to base model)
         if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -591,11 +690,18 @@ def build_app(
 
     @app.get("/api/update-check")
     async def update_check():
+        if is_openrouter:
+            return {"available": False, "note": "updates are managed by OpenRouter"}
         updater.local_model_path = server.model_path or _get_active_model_path()
         return await asyncio.to_thread(updater.check)
 
     @app.post("/api/update-apply")
     async def update_apply():
+        if is_openrouter:
+            return JSONResponse(
+                {"error": "model updates are managed by OpenRouter"},
+                status_code=400,
+            )
         nonlocal startup_error
         updater.local_model_path = server.model_path or _get_active_model_path()
 
@@ -647,7 +753,8 @@ def build_app(
     @app.post("/api/warmup")
     async def warmup():
         if not server.alive:
-            return JSONResponse({"ok": False, "error": "llama-server not running"}, status_code=503)
+            backend_name = "OpenRouter" if is_openrouter else "llama-server"
+            return JSONResponse({"ok": False, "error": f"{backend_name} not running"}, status_code=503)
         t0 = time.time()
         try:
             await server.complete_once(prompt=" ", max_tokens=1)
@@ -687,11 +794,13 @@ def build_app(
         if not req.messages:
             return JSONResponse({"error": "messages is empty"}, status_code=400)
         if not server.alive:
-            return JSONResponse(
-                {"error": "llama-server not running — open Onboarding to download the model"},
-                status_code=503,
+            err_msg = (
+                "OpenRouter API key not set — add OPENROUTER_API_KEY to your environment"
+                if is_openrouter
+                else "llama-server not running — open Onboarding to download the model"
             )
-        lora_arr = _lora_arr_for(req)
+            return JSONResponse({"error": err_msg}, status_code=503)
+        lora_arr = _lora_arr_for(req) if not is_openrouter else None
         if req.stream:
             return StreamingResponse(
                 _stream_chat(server, bridge, req, lora=lora_arr),
@@ -709,7 +818,7 @@ def build_app(
     def index():
         return JSONResponse({
             "ok": True,
-            "note": "MiniCPM sidecar gateway (llama.cpp backend)",
+            "note": f"MiniCPM sidecar gateway ({backend} backend)",
             "endpoints": [
                 "/api/health", "/api/chat", "/api/warmup",
                 "/api/models", "/api/load-model",
@@ -725,9 +834,13 @@ def build_app(
 
 # ── Chat plumbing ───────────────────────────────────────────────────────────
 
+# Type alias for the unified backend — both LlamaServer and OpenRouterClient
+# expose the same stream_chat() / health() / alive interface.
+AnyBackend = LlamaServer | OpenRouterClient
+
 
 async def _stream_chat(
-    server: LlamaServer,
+    server: AnyBackend,
     bridge: ClawdBridge,
     req: ChatRequest,
     *,
@@ -804,7 +917,7 @@ async def _stream_chat(
 
 
 async def _blocking_chat(
-    server: LlamaServer,
+    server: AnyBackend,
     bridge: ClawdBridge,
     req: ChatRequest,
     *,
