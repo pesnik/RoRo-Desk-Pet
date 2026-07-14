@@ -345,7 +345,7 @@
 
     // Backend selector (llama.cpp / OpenRouter / Hermes)
     const backendMode = window.minicpmSettings.getBackendMode
-      ? window.minicpmSettings.getBackendMode()
+      ? await window.minicpmSettings.getBackendMode()
       : null;
 
     if (IS_WINDOWS && backendMode !== "openvino") {

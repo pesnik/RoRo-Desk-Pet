@@ -2573,6 +2573,9 @@ module.exports = function initMinicpmChat(ctx) {
         return { ok: false, device, error: localizeError(err) };
       }
     },
+    "minicpm-settings:get-backend-mode": async () => {
+      return process.env.MINICPM_BACKEND || "llama.cpp";
+    },
     "minicpm-settings:set-backend-mode": async (_evt, payload) => {
       const mode = (payload && payload.mode) || "llama.cpp";
       const validModes = ["llama.cpp", "openrouter", "hermes"];

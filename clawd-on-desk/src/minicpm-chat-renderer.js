@@ -72,6 +72,16 @@ let history = [];            // multi-turn conversation; persists across opens
 let abortCtrl = null;
 let fadeTimer = null;
 let inputEl = null;          // <textarea> while in ask state
+let isBubbleHovered = false; // mouse over the bubble → keep alive
+
+bubble.addEventListener("mouseenter", () => {
+  isBubbleHovered = true;
+  if (phase === "ask") clearFade();
+});
+bubble.addEventListener("mouseleave", () => {
+  isBubbleHovered = false;
+  if (phase === "ask") armAskIdleTimer();
+});
 // Tracks the latest remote revision shown in the update pill so we can
 // re-render its label on a language change without losing the version.
 let updPillRevision = null;
@@ -89,6 +99,21 @@ function resolveThinking(chatParams) {
 // ── window helpers ──
 function clearFade() {
   if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null; }
+}
+
+const ASK_IDLE_MS = 25000;
+function isBubbleActive() {
+  return isBubbleHovered || (inputEl && document.activeElement === inputEl);
+}
+function armAskIdleTimer() {
+  clearFade();
+  if (isBubbleActive()) return;
+  fadeTimer = setTimeout(() => {
+    fadeTimer = null;
+    if (phase === "ask" && !isBubbleActive() && (!inputEl || !inputEl.value.trim())) {
+      hideBubble({ fade: true });
+    }
+  }, ASK_IDLE_MS);
 }
 
 async function setBubbleSize(width, height) {
@@ -196,6 +221,8 @@ async function showAsk(lastReply) {
     inputEl = document.getElementById("ask-input");
     inputEl.addEventListener("input", () => autoresizeFixed(inputEl));
     inputEl.addEventListener("keydown", onAskKey);
+    inputEl.addEventListener("focus", () => clearFade());
+    inputEl.addEventListener("blur", () => { if (phase === "ask") armAskIdleTimer(); });
     await measureAndShow();
     const lr = document.getElementById("last-reply-region");
     if (lr) lr.scrollTop = lr.scrollHeight;
@@ -219,6 +246,8 @@ async function showAsk(lastReply) {
     inputEl = document.getElementById("ask-input");
     inputEl.addEventListener("input", () => autoresize(inputEl));
     inputEl.addEventListener("keydown", onAskKey);
+    inputEl.addEventListener("focus", () => clearFade());
+    inputEl.addEventListener("blur", () => { if (phase === "ask") armAskIdleTimer(); });
     await measureAndShow({ width: naturalAskWidth("") });
   }
   if (window.minicpm && window.minicpm.focusWindow) {
@@ -975,15 +1004,8 @@ async function submit(text) {
     const lastReply = replyAcc;
     fadeTimer = setTimeout(async () => {
       fadeTimer = null;
-      // Re-render with the previous reply pinned dimly above a fresh input.
       await showAsk(lastReply);
-      // Auto-fade if user idles in ask phase for ~25s.
-      fadeTimer = setTimeout(() => {
-        fadeTimer = null;
-        if (phase === "ask" && (!inputEl || !inputEl.value.trim())) {
-          hideBubble({ fade: true });
-        }
-      }, 25000);
+      armAskIdleTimer();
     }, readingMs);
   } catch (err) {
     if (typer) typer.stop();
